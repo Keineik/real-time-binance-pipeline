@@ -15,7 +15,7 @@ logger = logging.getLogger(__name__)
 BINANCE_API_URL = "https://api.binance.com/api/v3/ticker/price?symbol=BTCUSDT"
 KAFKA_TOPIC = "btc-price"
 KAFKA_BOOTSTRAP_SERVERS = ['localhost:9092']
-POLLING_INTERVAL = 0.1  # 100ms
+POLLING_INTERVAL = 0.5  # 100ms
 
 def setup_kafka_producer():
     """Initialize and return a Kafka producer instance"""
@@ -64,9 +64,9 @@ def validate_response(data):
         logger.error(f"Price is not a valid float: {data['price']}")
         return False
 
-def add_event_time(data):
+def add_timestamp(data):
     """Add event-time field with ISO8601 formatted timestamp"""
-    data['event-time'] = datetime.now(timezone.utc).isoformat()
+    data['timestamp'] = datetime.now(timezone.utc).isoformat()
     return data
 
 def publish_to_kafka(producer, data):
@@ -96,7 +96,7 @@ def main():
             
             # Process and publish if valid
             if data and validate_response(data):
-                data = add_event_time(data)
+                data = add_timestamp(data)
                 publish_to_kafka(producer, data)
                 logger.info(f"Published: {data}")
             

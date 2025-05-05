@@ -1,3 +1,6 @@
+TOPIC ?= btc-price
+PYSPARK_FILE ?= src/Transform/22127218_moving.py
+
 up:
 	docker compose up --detach --scale spark-worker=2
 down:
@@ -11,5 +14,10 @@ extract:
 consume:
 	docker exec -it kafka kafka-console-consumer.sh \
 		--bootstrap-server localhost:9092 \
-		--topic btc-price \
-		--from-beginning
+		--topic $(TOPIC)
+spark-submit:
+	docker cp $(PYSPARK_FILE) spark-master:/opt/bitnami/spark
+	docker exec -it spark-master \
+		spark-submit --master spark://spark-master:7077 \
+		--packages org.apache.spark:spark-sql-kafka-0-10_2.12:3.5.5 \
+		/opt/bitnami/spark/$(notdir $(PYSPARK_FILE))
