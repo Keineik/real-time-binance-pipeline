@@ -38,7 +38,6 @@ services:
       - '8080:8080'
   spark-worker:
     image: docker.io/bitnami/spark:latest
-    container_name: spark-worker
     environment:
       - SPARK_MODE=worker
       - SPARK_MASTER_URL=spark://spark:7077
