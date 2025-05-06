@@ -14,7 +14,7 @@ logger = logging.getLogger(__name__)
 # Constants
 BINANCE_API_URL = "https://api.binance.com/api/v3/ticker/price?symbol=BTCUSDT"
 KAFKA_TOPIC = "btc-price"
-KAFKA_BOOTSTRAP_SERVERS = ['localhost:9092']
+KAFKA_BOOTSTRAP_SERVERS = ['localhost:9094']
 POLLING_INTERVAL = 0.5  # 100ms
 
 def setup_kafka_producer():

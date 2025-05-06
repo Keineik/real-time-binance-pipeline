@@ -22,7 +22,7 @@ def main():
     # Read from Kafka source
     kafka_stream = spark.readStream\
                         .format("kafka")\
-                        .option("kafka.bootstrap.servers", "localhost:9092")\
+                        .option("kafka.bootstrap.servers", "kafka:9092")\
                         .option("subscribe", "btc-price")\
                         .option("startingOffsets", "latest")\
                         .load()
@@ -85,17 +85,17 @@ def main():
     output_stream = combined_stream.select(to_json(struct("*")).alias("value"))
 
     # Write the output to console for debugging
-    output_stream.writeStream\
-        .format("console")\
-        .outputMode("append")\
-        .option("truncate", "false")\
-        .start()\
-        .awaitTermination()
+    # output_stream.writeStream\
+    #     .format("console")\
+    #     .outputMode("append")\
+    #     .option("truncate", "false")\
+    #     .start()\
+    #     .awaitTermination()
 
     # Write the results to Kafka
     query = output_stream.writeStream\
                 .format("kafka")\
-                .option("kafka.bootstrap.servers", "localhost:9092")\
+                .option("kafka.bootstrap.servers", "kafka:9092")\
                 .option("topic", "btc-price-moving")\
                 .option("checkpointLocation", "/tmp/checkpoints/btc-price-moving")\
                 .outputMode("append")\

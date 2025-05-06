@@ -19,7 +19,7 @@ extract:
 # Use make consume TOPIC="<topic>" to consume from a different topic
 consume:
 	docker exec -it kafka kafka-console-consumer.sh \
-		--bootstrap-server localhost:9092 \
+		--bootstrap-server localhost:9094 \
 		--topic $(TOPIC)
 		
 spark-submit:
