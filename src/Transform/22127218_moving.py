@@ -12,6 +12,7 @@ def main():
                         .config("spark.sql.streaming.forceDeleteTempCheckpointLocation", "true")\
                         .config("spark.sql.streaming.statefulOperator.allowMultiple", "true")\
                         .config("spark.cleaner.referenceTracking.cleanCheckpoints", "true")\
+                        .config("spark.cores.max", "2")\
                         .getOrCreate()
     spark.sparkContext.setLogLevel("ERROR")
     

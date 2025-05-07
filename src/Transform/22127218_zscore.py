@@ -1,7 +1,7 @@
 from pyspark.sql import SparkSession
 from pyspark.sql.functions import (
-    from_json, col, avg, expr,to_json, struct, date_trunc)
-from pyspark.sql.types import StructType, StructField, StringType, DoubleType, TimestampType
+    from_json, col, avg, expr,to_json, struct, date_trunc, explode)
+from pyspark.sql.types import StructType, StructField, StringType, DoubleType, TimestampType, ArrayType
 
 def main():
     # Initialize Spark
@@ -9,6 +9,7 @@ def main():
                         .appName("BTC Price Z-score")\
                         .config("spark.streaming.stopGracefullyOnShutdown", "true")\
                         .config("spark.sql.streaming.forceDeleteTempCheckpointLocation", "true")\
+                        .config("spark.cleaner.referenceTracking.cleanCheckpoints", "true")\
                         .config("spark.cores.max", "2")\
                         .getOrCreate()
     spark.sparkContext.setLogLevel("ERROR")
@@ -23,11 +24,11 @@ def main():
     moving_stats_schema = StructType([
         StructField("timestamp", TimestampType(), False),
         StructField("symbol", StringType(), False),
-        StructField("stats", StructType([
-            StructField("window", StringType(), False),
-            StructField("avg_price", DoubleType(), False),
-            StructField("std_price", DoubleType(), False)
-        ]))
+        StructField("stats", ArrayType(StructType([
+        StructField("window", StringType(), False),
+        StructField("avg_price", DoubleType(), False),
+        StructField("std_price", DoubleType(), False)
+    ])))
     ])
     
     # Read btc-price topic
@@ -56,15 +57,20 @@ def main():
         .load()
 
     moving_stream = raw_moving\
-        .selectExpr("CAST(value AS STRING) as json_value")\
-        .select(from_json("json_value", moving_stats_schema).alias("data"))\
-        .select(
-            col("data.timestamp"),
-            col("data.symbol"),
-            col("data.stats.window").alias("window"),
-            col("data.stats.avg_price"),
-            col("data.stats.std_price")
-        )
+    .selectExpr("CAST(value AS STRING) as json_value")\
+    .select(from_json("json_value", moving_stats_schema).alias("data"))\
+    .select(
+        col("data.timestamp"),
+        col("data.symbol"),
+        explode(col("data.stats")).alias("stats") 
+    )\
+    .select(
+        col("timestamp"),
+        col("symbol"),
+        col("stats.window").alias("window"),
+        col("stats.avg_price").alias("avg_price"),
+        col("stats.std_price").alias("std_price")
+    )
     
     # Round the timestamp down to the nearest second      
     price_stream = price_stream.withColumn(
@@ -81,7 +87,7 @@ def main():
         
     # Add watermark
     moving_stream = moving_stream.withWatermark("timestamp", "5 seconds")
-
+    
      # Join on timestamp and symbol
     joined_stream = price_stream.join(
         moving_stream,
@@ -112,14 +118,6 @@ def main():
     # Convert to final output format
     output = grouped_result.select(to_json(struct("*")).alias("value"))
     
-    # Write the output to console for debugging
-    console_query = output.writeStream\
-                        .format("console")\
-                        .outputMode("append")\
-                        .option("truncate", "false")\
-                        .start()\
-                        .awaitTermination()
-    
     # Write to Kafka topic btc-price-zscore
     query = output.writeStream \
         .format("kafka") \
@@ -129,7 +127,6 @@ def main():
         .outputMode("append") \
         .start()
 
-    console_query.awaitTermination()
     query.awaitTermination()
 
 if __name__ == "__main__":
