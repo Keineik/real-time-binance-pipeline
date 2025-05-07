@@ -1,16 +1,17 @@
 from pyspark.sql import SparkSession
 from pyspark.sql.functions import (
-    from_json, col, window, avg, stddev, expr, 
-    to_json, struct, lit, array, array_union, coalesce, collect_list)
-from pyspark.sql.types import StructType, StructField, StringType, DoubleType, TimestampType
+    from_json, col, window, avg, stddev,
+    to_json, struct, lit, collect_list)
+from pyspark.sql.types import StructType, StructField, StringType, TimestampType
 
 def main():
     # Initialize Spark
     spark = SparkSession.builder\
                         .appName("BTC Price Analytics")\
                         .config("spark.streaming.stopGracefullyOnShutdown", "true")\
-                        .config("spark.sql.streaming.forceDeleteTempCheckpointLocation", "true") \
-                        .config("spark.cores.max", "2")\
+                        .config("spark.sql.streaming.forceDeleteTempCheckpointLocation", "true")\
+                        .config("spark.sql.streaming.statefulOperator.allowMultiple", "true")\
+                        .config("spark.cleaner.referenceTracking.cleanCheckpoints", "true")\
                         .getOrCreate()
     spark.sparkContext.setLogLevel("ERROR")
     
@@ -36,13 +37,13 @@ def main():
                     .selectExpr(
                         "data.symbol", 
                         "DOUBLE(data.price) as price", 
-                        "data.timestamp")
+                        "data.timestamp")\
+                    .withWatermark("timestamp", "10 seconds")
     
 
     def calc_moving_stats(df, window_name, window_length):
         # Calculate moving average and standard deviation
         return df\
-            .withWatermark("timestamp", "5 seconds")\
             .groupBy(
                 window("timestamp", window_length), 
                 "symbol")\
@@ -50,16 +51,11 @@ def main():
                 avg("price").alias("avg_price"),
                 stddev("price").alias("std_price"))\
             .select(
+                col("window").alias("tumbling_window"),
+                col("symbol"),
                 col("window.end").alias("timestamp"),
-                lit(window_name).alias("window_name"),
-                col("symbol"),
-                col("avg_price"),
-                col("std_price"))\
-            .select(
-                col("timestamp"),
-                col("symbol"),
                 struct(
-                    col("window_name").alias("window"),
+                    lit(window_name).alias("window"),
                     col("avg_price"),
                     col("std_price")
                 ).alias("stats"))
@@ -77,21 +73,19 @@ def main():
         if k == "5s": continue
         combined_stream = combined_stream.unionByName(windowed_streams[k])
 
-    # # Group by timestamp and symbol to collect all windows for the same key
-    # grouped_stream = combined_stream\
-    #     .withWatermark("timestamp", "5 seconds")\
-    #     .groupBy("timestamp", "symbol")\
-    #     .agg(collect_list("stats").alias("windows"))
+    # Group by timestamp and symbol to collect all windows for the same key
+    grouped_stream = combined_stream\
+        .groupBy(
+            window(combined_stream.tumbling_window, "5 seconds"), "symbol", "timestamp")\
+        .agg(collect_list("stats").alias("stats"))\
+        .select(
+            col("timestamp"),
+            col("symbol"),
+            col("stats"),
+        )
+    
     # Format the output to json
-    output_stream = combined_stream.select(to_json(struct("*")).alias("value"))
-
-    # Write the output to console for debugging
-    # output_stream.writeStream\
-    #     .format("console")\
-    #     .outputMode("append")\
-    #     .option("truncate", "false")\
-    #     .start()\
-    #     .awaitTermination()
+    output_stream = grouped_stream.select(to_json(struct("*")).alias("value"))
 
     # Write the results to Kafka
     query = output_stream.writeStream\
