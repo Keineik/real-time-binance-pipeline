@@ -1,1 +1,9 @@
 .venv
+hello-world
+.bloop
+.bsp
+.scala-build
+.vscode
+project
+.metals
+target
