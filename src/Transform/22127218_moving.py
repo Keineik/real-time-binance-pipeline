@@ -9,6 +9,8 @@ def main():
     spark = SparkSession.builder\
                         .appName("BTC Price Analytics")\
                         .config("spark.streaming.stopGracefullyOnShutdown", "true")\
+                        .config("spark.sql.streaming.forceDeleteTempCheckpointLocation", "true") \
+                        .config("spark.cores.max", "2")\
                         .getOrCreate()
     spark.sparkContext.setLogLevel("ERROR")
     
@@ -80,7 +82,6 @@ def main():
     #     .withWatermark("timestamp", "5 seconds")\
     #     .groupBy("timestamp", "symbol")\
     #     .agg(collect_list("stats").alias("windows"))
-    
     # Format the output to json
     output_stream = combined_stream.select(to_json(struct("*")).alias("value"))
 

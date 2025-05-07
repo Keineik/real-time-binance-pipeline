@@ -1,0 +1,136 @@
+from pyspark.sql import SparkSession
+from pyspark.sql.functions import (
+    from_json, col, avg, expr,to_json, struct, date_trunc)
+from pyspark.sql.types import StructType, StructField, StringType, DoubleType, TimestampType
+
+def main():
+    # Initialize Spark
+    spark = SparkSession.builder\
+                        .appName("BTC Price Z-score")\
+                        .config("spark.streaming.stopGracefullyOnShutdown", "true")\
+                        .config("spark.sql.streaming.forceDeleteTempCheckpointLocation", "true")\
+                        .config("spark.cores.max", "2")\
+                        .getOrCreate()
+    spark.sparkContext.setLogLevel("ERROR")
+    
+    # Define schema for incoming data
+    btc_price_schema = StructType([
+        StructField("symbol", StringType(), False),
+        StructField("price", StringType(), False),
+        StructField("timestamp", TimestampType(), False)
+    ])
+    
+    moving_stats_schema = StructType([
+        StructField("timestamp", TimestampType(), False),
+        StructField("symbol", StringType(), False),
+        StructField("stats", StructType([
+            StructField("window", StringType(), False),
+            StructField("avg_price", DoubleType(), False),
+            StructField("std_price", DoubleType(), False)
+        ]))
+    ])
+    
+    # Read btc-price topic
+    raw_price = spark.readStream\
+                     .format("kafka")\
+                     .option("kafka.bootstrap.servers", "kafka:9092")\
+                     .option("subscribe", "btc-price")\
+                     .option("startingOffsets", "latest")\
+                     .load()
+    
+    price_stream = raw_price\
+            .selectExpr("CAST(value AS STRING) as json_value")\
+            .select(from_json("json_value", btc_price_schema).alias("data"))\
+            .select(
+                col("data.symbol"),
+                col("data.price").cast("double").alias("price"),
+                col("data.timestamp")
+            )
+                
+    # Read btc-price-moving topic
+    raw_moving = spark.readStream\
+        .format("kafka")\
+        .option("kafka.bootstrap.servers", "kafka:9092")\
+        .option("subscribe", "btc-price-moving")\
+        .option("startingOffsets", "latest")\
+        .load()
+
+    moving_stream = raw_moving\
+        .selectExpr("CAST(value AS STRING) as json_value")\
+        .select(from_json("json_value", moving_stats_schema).alias("data"))\
+        .select(
+            col("data.timestamp"),
+            col("data.symbol"),
+            col("data.stats.window").alias("window"),
+            col("data.stats.avg_price"),
+            col("data.stats.std_price")
+        )
+    
+    # Round the timestamp down to the nearest second      
+    price_stream = price_stream.withColumn(
+        "timestamp",
+        date_trunc("second", col("timestamp"))
+    )
+    
+    # Group by symbol and the rounded timestamp, then compute average price
+    # This ensures each (symbol, timestamp) pair has only one record
+    price_stream = price_stream\
+                .withWatermark("timestamp", "5 seconds")\
+                .groupBy("symbol", "timestamp")\
+                .agg(avg("price").alias("price"))
+        
+    # Add watermark
+    moving_stream = moving_stream.withWatermark("timestamp", "5 seconds")
+
+     # Join on timestamp and symbol
+    joined_stream = price_stream.join(
+        moving_stream,
+        on = ["timestamp", "symbol"]
+    )
+    
+    # Compute z-score: (price - avg)/ std (handle std = 0)
+    enriched = joined_stream.withColumn(
+        "zscore_price",
+        expr("CASE when std_price = 0 OR std_price IS NULL THEN 0 ELSE (price - avg_price)/ std_price END")
+    )
+    
+    # Group results per timestamp and symbol with list of window/zscores
+    grouped_result = enriched\
+            .select(
+                col("timestamp"),
+                col("symbol"),
+                struct(
+                    col("window"),
+                    col("zscore_price"),
+                ).alias("zscore_struct")
+            )\
+            .dropDuplicates(["timestamp", "symbol", "zscore_struct"])\
+            .groupBy("timestamp", "symbol")\
+            .agg(expr("collect_list(zscore_struct) as zscores"))
+            
+    
+    # Convert to final output format
+    output = grouped_result.select(to_json(struct("*")).alias("value"))
+    
+    # Write the output to console for debugging
+    console_query = output.writeStream\
+                        .format("console")\
+                        .outputMode("append")\
+                        .option("truncate", "false")\
+                        .start()\
+                        .awaitTermination()
+    
+    # Write to Kafka topic btc-price-zscore
+    query = output.writeStream \
+        .format("kafka") \
+        .option("kafka.bootstrap.servers", "kafka:9092") \
+        .option("topic", "btc-price-zscore") \
+        .option("checkpointLocation", "/tmp/checkpoints/btc-price-zscore") \
+        .outputMode("append") \
+        .start()
+
+    console_query.awaitTermination()
+    query.awaitTermination()
+
+if __name__ == "__main__":
+    main()
