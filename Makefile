@@ -28,3 +28,12 @@ spark-submit:
 		spark-submit --master spark://spark-master:7077 \
 		--packages org.apache.spark:spark-sql-kafka-0-10_2.12:3.5.5 \
 		/opt/bitnami/spark/$(notdir $(PYSPARK_FILE))
+
+spark-submit-scala:
+	(cd src/Bonus && sbt package)
+	docker cp src/Bonus/target/scala-2.12/btcpricestream_2.12-1.0.jar spark-master:/opt/bitnami/spark/
+	docker exec -it spark-master \
+		spark-submit --master spark://spark-master:7077 \
+		--packages org.apache.spark:spark-sql-kafka-0-10_2.12:3.5.5 \
+		--class BonusPriceStream \
+		/opt/bitnami/spark/btcpricestream_2.12-1.0.jar
