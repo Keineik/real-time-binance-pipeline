@@ -25,10 +25,10 @@ def main():
         StructField("timestamp", TimestampType(), False),
         StructField("symbol", StringType(), False),
         StructField("stats", ArrayType(StructType([
-        StructField("window", StringType(), False),
-        StructField("avg_price", DoubleType(), False),
-        StructField("std_price", DoubleType(), False)
-    ])))
+            StructField("window", StringType(), False),
+            StructField("avg_price", DoubleType(), False),
+            StructField("std_price", DoubleType(), False)
+        ])))
     ])
     
     # Read btc-price topic
@@ -46,7 +46,15 @@ def main():
                 col("data.symbol"),
                 col("data.price").cast("double").alias("price"),
                 col("data.timestamp")
-            )
+            )\
+            .withColumn("timestamp", date_trunc("second", col("timestamp")))  # Normalize timestamp
+    
+    # Group by symbol and the rounded timestamp, then compute average price
+    # This ensures each (symbol, timestamp) pair has only one record
+    price_stream = price_stream \
+        .withWatermark("timestamp", "10 seconds") \
+        .groupBy("symbol", "timestamp") \
+        .agg(avg("price").alias("price"))
                 
     # Read btc-price-moving topic
     raw_moving = spark.readStream\
@@ -57,36 +65,21 @@ def main():
         .load()
 
     moving_stream = raw_moving\
-    .selectExpr("CAST(value AS STRING) as json_value")\
-    .select(from_json("json_value", moving_stats_schema).alias("data"))\
-    .select(
-        col("data.timestamp"),
-        col("data.symbol"),
-        explode(col("data.stats")).alias("stats") 
-    )\
-    .select(
-        col("timestamp"),
-        col("symbol"),
-        col("stats.window").alias("window"),
-        col("stats.avg_price").alias("avg_price"),
-        col("stats.std_price").alias("std_price")
-    )
-    
-    # Round the timestamp down to the nearest second      
-    price_stream = price_stream.withColumn(
-        "timestamp",
-        date_trunc("second", col("timestamp"))
-    )
-    
-    # Group by symbol and the rounded timestamp, then compute average price
-    # This ensures each (symbol, timestamp) pair has only one record
-    price_stream = price_stream\
-                .withWatermark("timestamp", "5 seconds")\
-                .groupBy("symbol", "timestamp")\
-                .agg(avg("price").alias("price"))
-        
-    # Add watermark
-    moving_stream = moving_stream.withWatermark("timestamp", "5 seconds")
+        .selectExpr("CAST(value AS STRING) as json_value")\
+        .select(from_json("json_value", moving_stats_schema).alias("data"))\
+        .select(
+            col("data.timestamp"),
+            col("data.symbol"),
+            explode(col("data.stats")).alias("stats") 
+        )\
+        .select(
+            col("timestamp"),
+            col("symbol"),
+            col("stats.window").alias("window"),
+            col("stats.avg_price").alias("avg_price"),
+            col("stats.std_price").alias("std_price")
+        )\
+        .withWatermark("timestamp", "10 seconds")
     
      # Join on timestamp and symbol
     joined_stream = price_stream.join(
@@ -100,7 +93,7 @@ def main():
         expr("CASE when std_price = 0 OR std_price IS NULL THEN 0 ELSE (price - avg_price)/ std_price END")
     )
     
-    # Group results per timestamp and symbol with list of window/zscores
+    # Group by timestamp and symbol, collect list of zscores per window
     grouped_result = enriched\
             .select(
                 col("timestamp"),
@@ -110,7 +103,6 @@ def main():
                     col("zscore_price"),
                 ).alias("zscore_struct")
             )\
-            .dropDuplicates(["timestamp", "symbol", "zscore_struct"])\
             .groupBy("timestamp", "symbol")\
             .agg(expr("collect_list(zscore_struct) as zscores"))
             
