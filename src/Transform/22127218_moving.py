@@ -62,8 +62,7 @@ def main():
                 ).alias("stats"))
     
     # Define the time windows for moving statistics
-    # windows = {"30s": "30 seconds", "1m": "1 minute", "5m": "5 minutes", "15m": "15 minutes", "30m": "30 minutes", "1h": "1 hour"}
-    windows = {"5s": "5 seconds", "10s": "10 seconds", "20s": "20 seconds", "40s": "40 seconds"}
+    windows = {"30s": "30 seconds", "1m": "1 minute", "5m": "5 minutes", "15m": "15 minutes", "30m": "30 minutes", "1h": "1 hour"}
 
     # Calculate moving statistics for each window
     windowed_streams = {k: calc_moving_stats(parsed_stream, k, v) for k, v in windows.items()}
