@@ -4,6 +4,8 @@ from pyspark.sql.functions import (
     to_json, struct, lit, collect_list)
 from pyspark.sql.types import StructType, StructField, StringType, TimestampType
 
+KAFKA_BROKER = "kafka:9092"
+
 def main():
     # Initialize Spark
     spark = SparkSession.builder\
@@ -12,7 +14,7 @@ def main():
                         .config("spark.sql.streaming.forceDeleteTempCheckpointLocation", "true")\
                         .config("spark.sql.streaming.statefulOperator.allowMultiple", "true")\
                         .config("spark.cleaner.referenceTracking.cleanCheckpoints", "true")\
-                        .config("spark.cores.max", "2")\
+                        .config("spark.cores.max", "3")\
                         .getOrCreate()
     spark.sparkContext.setLogLevel("ERROR")
     
@@ -26,7 +28,7 @@ def main():
     # Read from Kafka source
     kafka_stream = spark.readStream\
                         .format("kafka")\
-                        .option("kafka.bootstrap.servers", "kafka:9092")\
+                        .option("kafka.bootstrap.servers", KAFKA_BROKER)\
                         .option("subscribe", "btc-price")\
                         .option("startingOffsets", "latest")\
                         .load()
@@ -68,9 +70,9 @@ def main():
     windowed_streams = {k: calc_moving_stats(parsed_stream, k, v) for k, v in windows.items()}
 
     # Combine all windowed streams into one
-    combined_stream = windowed_streams["5s"]
+    combined_stream = windowed_streams["30s"]
     for k, v in windows.items():
-        if k == "5s": continue
+        if k == "30s": continue
         combined_stream = combined_stream.unionByName(windowed_streams[k])
 
     # Group by timestamp and symbol to collect all windows for the same key
@@ -90,7 +92,7 @@ def main():
     # Write the results to Kafka
     query = output_stream.writeStream\
                 .format("kafka")\
-                .option("kafka.bootstrap.servers", "kafka:9092")\
+                .option("kafka.bootstrap.servers", KAFKA_BROKER)\
                 .option("topic", "btc-price-moving")\
                 .option("checkpointLocation", "/tmp/checkpoints/btc-price-moving")\
                 .outputMode("append")\

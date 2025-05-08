@@ -3,6 +3,8 @@ from pyspark.sql.functions import (
     from_json, col, avg, expr,to_json, struct, date_trunc, explode)
 from pyspark.sql.types import StructType, StructField, StringType, DoubleType, TimestampType, ArrayType
 
+KAFKA_BROKER = "kafka:9092"
+
 def main():
     # Initialize Spark
     spark = SparkSession.builder\
@@ -10,7 +12,7 @@ def main():
                         .config("spark.streaming.stopGracefullyOnShutdown", "true")\
                         .config("spark.sql.streaming.forceDeleteTempCheckpointLocation", "true")\
                         .config("spark.cleaner.referenceTracking.cleanCheckpoints", "true")\
-                        .config("spark.cores.max", "2")\
+                        .config("spark.cores.max", "3")\
                         .getOrCreate()
     spark.sparkContext.setLogLevel("ERROR")
     
@@ -34,7 +36,7 @@ def main():
     # Read btc-price topic
     raw_price = spark.readStream\
                      .format("kafka")\
-                     .option("kafka.bootstrap.servers", "kafka:9092")\
+                     .option("kafka.bootstrap.servers", KAFKA_BROKER)\
                      .option("subscribe", "btc-price")\
                      .option("startingOffsets", "latest")\
                      .load()
@@ -59,7 +61,7 @@ def main():
     # Read btc-price-moving topic
     raw_moving = spark.readStream\
         .format("kafka")\
-        .option("kafka.bootstrap.servers", "kafka:9092")\
+        .option("kafka.bootstrap.servers", KAFKA_BROKER)\
         .option("subscribe", "btc-price-moving")\
         .option("startingOffsets", "latest")\
         .load()
@@ -113,7 +115,7 @@ def main():
     # Write to Kafka topic btc-price-zscore
     query = output.writeStream \
         .format("kafka") \
-        .option("kafka.bootstrap.servers", "kafka:9092") \
+        .option("kafka.bootstrap.servers", KAFKA_BROKER) \
         .option("topic", "btc-price-zscore") \
         .option("checkpointLocation", "/tmp/checkpoints/btc-price-zscore") \
         .outputMode("append") \

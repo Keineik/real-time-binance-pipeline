@@ -2,8 +2,8 @@ from pyspark.sql import SparkSession
 from pyspark.sql.functions import from_json, col, explode
 from pyspark.sql.types import StructType, StructField, StringType, TimestampType, ArrayType, DoubleType
 
-KAFKA_BROKER = "localhost:9094"
-MONGODB_URI = "mongodb://localhost:27017"
+KAFKA_BROKER = "kafka:9092"
+MONGODB_URI = "mongodb://mongodb:27017"
 MONGODB_DATABASE = "crypto"
 
 def main():
@@ -40,8 +40,9 @@ def main():
 
     # Phân tích dữ liệu JSON
     parsed_stream = raw_zscore.selectExpr("CAST(value AS STRING) as json") \
-        .select(from_json(col("json"), zscore_schema).alias("data")) \
-        .select(
+        .select(from_json(col("json"), zscore_schema).alias("data"))
+    
+    output_stream = parsed_stream.select(
             col("data.timestamp"),
             col("data.symbol"),
             explode(col("data.zscores")).alias("zscore")
@@ -55,10 +56,10 @@ def main():
         .withWatermark("timestamp", "10 seconds")  # Handle late data (up to 10s)
 
     # Ghi từng window vào MongoDB collection riêng biệt
-    window_values = ["5s", "10s", "20s", "40s"]
+    window_values = ["30s", "1m", "5m", "15m", "30m", "1h"]
     for window in window_values:
         print(f"Writing to MongoDB collection for window: {window}...")
-        filtered = parsed_stream.filter(col("window") == window)
+        filtered = output_stream.filter(col("window") == window)
         filtered.writeStream \
             .format("mongodb") \
             .option("checkpointLocation", f"/tmp/checkpoints/mongo-{window}") \

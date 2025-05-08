@@ -9,6 +9,8 @@ import java.time.Duration
 import java.time.format.DateTimeFormatter
 
 object BonusPriceStream {
+    val SPARK_MASTER = "spark://spark-master:7077"
+    val KAFKA_BROKER = "kafka:9092"
     // Case classes to represent the data structure
     case class PriceEvent(timestamp: Timestamp, price: Double)
     case class Output(timestamp: Timestamp, windowLength: Double)
@@ -118,7 +120,7 @@ object BonusPriceStream {
     def writeToKafka(df: DataFrame, topic: String): Unit = {
         df.writeStream
             .format("kafka")
-            .option("kafka.bootstrap.servers", "kafka:9092")
+            .option("kafka.bootstrap.servers", KAFKA_BROKER)
             .option("topic", topic)
             .outputMode("append")
             .option("checkpointLocation", s"/tmp/checkpoints/$topic")
@@ -129,13 +131,14 @@ object BonusPriceStream {
         val spark = SparkSession.builder
             .appName("BTC Price Streaming Bonus")
             .config("spark.streaming.stopGracefullyOnShutdown", "true")
-            .master("spark://spark-master:7077")
+            .master(SPARK_MASTER)
             .getOrCreate()
         spark.sparkContext.setLogLevel("ERROR")
         
         import spark.implicits._
 
         val schema = new StructType()
+            .add("symbol", StringType)
             .add("timestamp", TimestampType)
             .add("price", StringType)
 
@@ -144,7 +147,7 @@ object BonusPriceStream {
             .format("kafka")
             .option("subscribe", "btc-price")
             .option("startingOffsets", "latest")
-            .option("kafka.bootstrap.servers", "kafka:9092")
+            .option("kafka.bootstrap.servers", KAFKA_BROKER)
             .load()
 
         // Parse the JSON data
@@ -155,10 +158,10 @@ object BonusPriceStream {
             .filter(col("price").isNotNull)
             .withWatermark("timestamp", "10 seconds")
 
-        // Add a key to the DataFrame (a key is required for groupByKey)
-        // This is necessary for the flatMapGroupsWithState function
-        // We use a constant key "btc" for all events
-        val keyedDF = parsedDF.as[PriceEvent].map(p => ("btc", p)).toDF("key", "event")
+        // Since a key is required for stateful processing, we can use the symbol as the dummy key
+        val keyedDF = parsedDF.map(row =>
+            (row.getString(0), PriceEvent(row.getTimestamp(1), row.getDouble(2)))
+        ).toDF("key", "price_event")
 
         // Group by key and apply the stateful processing
         // Use flatMapGroupsWithState to maintain state across batches
