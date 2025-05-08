@@ -49,10 +49,10 @@ object BonusPriceStream {
         
         // Update existing events with new data (check for price shifts)
         val processedEvents = allEvents.map { event =>
-            if (event.processed) event 
+            if (event.processed) event
             else {
-                // Find new events that are within the 20-second window
-                val eligible = incoming.filter(s => 
+                // Find events that are within the 20-second window
+                val eligible = allEvents.filter(s => 
                     s.event.timestamp.after(event.event.timestamp) &&
                     Duration.between(event.event.timestamp.toInstant, s.event.timestamp.toInstant).getSeconds <= 20
                 )
@@ -77,8 +77,8 @@ object BonusPriceStream {
                     }.getOrElse(event.lowerFound) // No new lower found
                 } else event.lowerFound
                 
-                // Check if window is complete (event is >20s old or both price shifts found)
-                val windowComplete = Duration.between(event.event.timestamp.toInstant, currentTime.toInstant).getSeconds > 20 || 
+                // Check if window is complete (event is >30s old (20s + 10 grace) or both price shifts found)
+                val windowComplete = Duration.between(event.event.timestamp.toInstant, currentTime.toInstant).getSeconds > 30 || 
                                     (higherFound && lowerFound)
                                     
                 // Emit placeholders for shifts not found if window complete
@@ -94,12 +94,16 @@ object BonusPriceStream {
                     }
                 }
                 
+                // Yield the event with updated status
                 event.copy(higherFound = higherFound, lowerFound = lowerFound, processed = windowComplete)
             }
         }
         
         // Filter out processed events
-        state.update(EventState(processedEvents.filter(!_.processed)))
+        state.update(EventState(processedEvents.filter(e => 
+            !e.processed || // Keep unprocessed events
+            Duration.between(e.event.timestamp.toInstant, currentTime.toInstant).getSeconds <= 30 // Keep events within the 30s window
+        )))
         
         // Yield results
         results.iterator
